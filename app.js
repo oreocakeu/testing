@@ -7,7 +7,7 @@ try { db = firebase.database(); } catch(e) { console.warn('Firebase not availabl
 // ── State ──
 var currentRoom     = null;
 var currentVideo    = null;
-var videoType       = null;
+var videoType       = null;  // 'youtube' | 'drive'
 var isPlaying       = false;
 var myName          = 'You';
 var myId            = 'u_' + Math.random().toString(36).slice(2, 8);
@@ -34,6 +34,366 @@ function fmtTime(s) {
   s = Math.floor(s || 0);
   return Math.floor(s / 60) + ':' + String(s % 60).padStart(2, '0');
 }
+
+// ── Overlay ──
+function openApp() {
+  getEl('appOverlay').classList.add('open');
+  document.body.style.overflow = 'hidden';
+  setTimeout(function() { getEl('roomInput').focus(); }, 120);
+}
+
+function closeApp() {
+  getEl('appOverlay').classList.remove('open');
+  document.body.style.overflow = '';
+}
+
+function scrollToHow() {
+  getEl('how').scrollIntoView({ behavior: 'smooth' });
+}
+
+// ── Room ──
+function joinRoom() {
+  var name = getEl('nameInput').value.trim() || 'Anonymous';
+  var room = getEl('roomInput').value.trim().toLowerCase().replace(/\s+/g, '-');
+  if (!room) { alert('Please enter a room name.'); return; }
+
+  myName      = name;
+  currentRoom = room;
+
+  getEl('roomBadge').style.display    = 'flex';
+  getEl('roomBadgeLabel').textContent = '# ' + room;
+  getEl('chatRoomTag').textContent    = '#' + room;
+
+  addLocalMsg('system', '', 'Joined room #' + room);
+
+  if (!db) {
+    addLocalMsg('system', '', 'Firebase not connected — sync disabled.');
+    return;
+  }
+
+  roomRef    = db.ref('rooms/' + room + '/state');
+  chatRef    = db.ref('rooms/' + room + '/chat');
+  membersRef = db.ref('rooms/' + room + '/members');
+
+  // ── Presence ──
+  presenceRef = membersRef.child(myId);
+  presenceRef.set({ name: myName, joinedAt: Date.now() });
+  presenceRef.onDisconnect().remove();
+
+  membersRef.on('value', function(snap) {
+    var count = snap.numChildren();
+    var el    = getEl('memberCountNum');
+    var badge = getEl('memberCount');
+    if (el) el.textContent = count;
+    if (badge) {
+      if (count > 1) { badge.classList.add('active'); }
+      else           { badge.classList.remove('active'); }
+    }
+  });
+
+  // ── Room state listener ──
+  roomRef.on('value', function(snap) {
+    var state = snap.val();
+    if (!state || isSyncing) return;
+
+    // Load video if changed
+    if (state.video && state.video !== currentVideo) {
+      getEl('videoInput').value = state.video;
+      doLoadVideo(state.video, false);
+    }
+
+    // Sync play/pause
+    if (typeof state.playing === 'boolean' && state.playing !== isPlaying) {
+      if (state.playing) { doPlay(); } else { doPause(); }
+    }
+
+    // Sync seek — if drift > 2s jump to correct position
+    if (typeof state.time === 'number' && Math.abs(currentRawTime - state.time) > 2) {
+      seekTo(state.time);
+    }
+  });
+
+  // ── Chat ──
+  chatRef.limitToLast(80).on('child_added', function(snap) {
+    var m = snap.val();
+    if (!m) return;
+    appendChatMsg(m.who, m.text);
+  });
+}
+
+function copyRoom() {
+  if (!currentRoom) return;
+  navigator.clipboard.writeText(currentRoom)
+    .then(function()  { addLocalMsg('system', '', 'Room name "' + currentRoom + '" copied!'); })
+    .catch(function() { addLocalMsg('system', '', 'Room: ' + currentRoom); });
+}
+
+function pushState(updates) {
+  if (!roomRef) return;
+  isSyncing = true;
+  var data = Object.assign({ updatedAt: Date.now() }, updates);
+  roomRef.update(data).then(function() {
+    setTimeout(function() { isSyncing = false; }, 500);
+  }).catch(function(e) {
+    isSyncing = false;
+    console.warn('pushState error:', e);
+  });
+}
+
+// ── Video loading ──
+function loadVideo() {
+  var url = getEl('videoInput').value.trim();
+  if (!url) return;
+  doLoadVideo(url, true);
+}
+
+function doLoadVideo(url, pushToRoom) {
+  currentVideo = url;
+  var type = null;
+
+  // Hide both players first
+  getEl('videoFrame').style.display  = 'none';
+  getEl('driveVideo').style.display  = 'none';
+  getEl('driveVideo').src            = '';
+  getEl('playerPlaceholder').style.display = 'none';
+
+  if (/youtube\.com|youtu\.be/.test(url)) {
+    var vid = extractYTId(url);
+    if (!vid) { alert('Could not parse YouTube video ID.'); return; }
+    type = 'youtube';
+    var frame = getEl('videoFrame');
+    frame.src = 'https://www.youtube.com/embed/' + vid +
+                '?enablejsapi=1&autoplay=0&controls=1&rel=0&modestbranding=1';
+    frame.style.display = 'block';
+    setupYTMessaging();
+
+  } else if (/drive\.google\.com/.test(url)) {
+    var fid = extractDriveId(url);
+    if (!fid) { alert('Could not parse Google Drive file ID.'); return; }
+    type = 'drive';
+    setupDrivePlayer(fid);
+
+  } else {
+    alert('Paste a YouTube URL or a Google Drive share link.');
+    return;
+  }
+
+  videoType = type;
+  getEl('playerControls').style.display = 'flex';
+  getEl('driveNote').style.display = (type === 'drive') ? 'block' : 'none';
+  getEl('playerContainer').classList.toggle('drive-player', type === 'drive');
+
+  startTimeUpdate();
+
+  if (pushToRoom && roomRef) {
+    pushState({ video: url, playing: false, time: 0 });
+    addLocalMsg('system', '', 'Video loaded for everyone in the room');
+  }
+}
+
+// ── Drive HTML5 player ──
+function setupDrivePlayer(fileId) {
+  var video = getEl('driveVideo');
+
+  // Try direct streaming URL first
+  // Google Drive direct stream URL — works when file is shared "anyone with link"
+  var src = 'https://drive.google.com/uc?export=download&id=' + fileId;
+  video.src = src;
+  video.style.display = 'block';
+  video.load();
+
+  // Wire up Drive video events to keep Firebase state updated
+  video.onplay = function() {
+    isPlaying = true;
+    updatePlayBtn();
+    if (roomRef) pushState({ playing: true, time: video.currentTime });
+  };
+
+  video.onpause = function() {
+    isPlaying = false;
+    updatePlayBtn();
+    if (roomRef) pushState({ playing: false, time: video.currentTime });
+  };
+
+  video.onseeked = function() {
+    currentRawTime = video.currentTime;
+    if (roomRef) pushState({ time: video.currentTime });
+  };
+
+  video.ontimeupdate = function() {
+    currentRawTime = video.currentTime;
+    getEl('timeDisplay').textContent = fmtTime(video.currentTime);
+  };
+
+  video.onerror = function() {
+    // If direct URL fails (CORS), fall back to iframe embed
+    console.warn('Drive direct URL failed, falling back to iframe');
+    video.style.display = 'none';
+    var frame = getEl('videoFrame');
+    frame.src = 'https://drive.google.com/file/d/' + fileId + '/preview';
+    frame.style.display = 'block';
+    addLocalMsg('system', '', 'Using Drive preview mode — sync is limited on this browser.');
+  };
+}
+
+function extractYTId(url) {
+  var m = url.match(/(?:v=|youtu\.be\/|embed\/)([A-Za-z0-9_-]{11})/);
+  return m ? m[1] : null;
+}
+
+function extractDriveId(url) {
+  var m = url.match(/\/d\/([a-zA-Z0-9_-]+)/);
+  return m ? m[1] : null;
+}
+
+// ── YouTube iframe bridge ──
+var ytListenerAdded = false;
+function setupYTMessaging() {
+  if (ytListenerAdded) return;
+  ytListenerAdded = true;
+  window.addEventListener('message', function(e) {
+    if (!e.data) return;
+    try {
+      var d = (typeof e.data === 'string') ? JSON.parse(e.data) : e.data;
+      if (d.event === 'onStateChange') {
+        if (d.info === 1) { isPlaying = true;  updatePlayBtn(); }
+        if (d.info === 2) { isPlaying = false; updatePlayBtn(); }
+      }
+      if (d.event === 'infoDelivery' && d.info && d.info.currentTime !== undefined) {
+        currentRawTime = d.info.currentTime;
+        getEl('timeDisplay').textContent = fmtTime(d.info.currentTime);
+      }
+    } catch(err) {}
+  });
+  setTimeout(function() { sendYT('{"event":"listening"}'); }, 800);
+}
+
+function sendYT(json) {
+  var f = getEl('videoFrame');
+  if (f && f.contentWindow) {
+    try { f.contentWindow.postMessage(json, '*'); } catch(e) {}
+  }
+}
+
+function startTimeUpdate() {
+  if (timeUpdateTimer) clearInterval(timeUpdateTimer);
+  timeUpdateTimer = setInterval(function() {
+    if (videoType === 'youtube') {
+      sendYT('{"event":"listening"}');
+      sendYT(JSON.stringify({ event: 'command', func: 'getCurrentTime', args: '' }));
+    }
+    // Drive time is tracked via ontimeupdate event directly
+  }, 1000);
+}
+
+// ── Playback controls ──
+function togglePlay() {
+  if (isPlaying) {
+    doPause();
+    if (roomRef) pushState({ playing: false, time: currentRawTime });
+  } else {
+    doPlay();
+    if (roomRef) pushState({ playing: true, time: currentRawTime });
+  }
+}
+
+function doPlay() {
+  isPlaying = true;
+  updatePlayBtn();
+  if (videoType === 'youtube') {
+    sendYT(JSON.stringify({ event: 'command', func: 'playVideo', args: '' }));
+  } else if (videoType === 'drive') {
+    var v = getEl('driveVideo');
+    if (v && v.src) v.play().catch(function(){});
+  }
+}
+
+function doPause() {
+  isPlaying = false;
+  updatePlayBtn();
+  if (videoType === 'youtube') {
+    sendYT(JSON.stringify({ event: 'command', func: 'pauseVideo', args: '' }));
+  } else if (videoType === 'drive') {
+    var v = getEl('driveVideo');
+    if (v && v.src) v.pause();
+  }
+}
+
+function seekTo(t) {
+  if (videoType === 'youtube') {
+    sendYT(JSON.stringify({ event: 'command', func: 'seekTo', args: [t, true] }));
+  } else if (videoType === 'drive') {
+    var v = getEl('driveVideo');
+    if (v && v.src) v.currentTime = t;
+  }
+}
+
+function syncNow() {
+  if (!roomRef) { addLocalMsg('system', '', 'Join a room first!'); return; }
+  pushState({ time: currentRawTime, playing: isPlaying });
+  addLocalMsg('system', '', 'Synced everyone to your position');
+}
+
+function updatePlayBtn() {
+  getEl('playIcon').style.display  = isPlaying ? 'none'  : 'block';
+  getEl('pauseIcon').style.display = isPlaying ? 'block' : 'none';
+  getEl('playLabel').textContent   = isPlaying ? 'Pause' : 'Play';
+}
+
+// ── Expand ──
+function toggleExpand() {
+  playerExpanded = !playerExpanded;
+  getEl('playerContainer').classList.toggle('expanded', playerExpanded);
+  var modal = document.querySelector('.app-modal');
+  if (modal) modal.classList.toggle('player-expanded', playerExpanded);
+  getEl('expandIcon').style.display   = playerExpanded ? 'none'  : 'block';
+  getEl('collapseIcon').style.display = playerExpanded ? 'block' : 'none';
+  getEl('expandLabel').textContent    = playerExpanded ? 'Collapse' : 'Expand';
+}
+
+// ── Chat ──
+function sendChat() {
+  var inp = getEl('chatInput');
+  var txt = inp.value.trim();
+  if (!txt) return;
+  if (!chatRef) { addLocalMsg('system', '', 'Join a room first!'); return; }
+  inp.value = '';
+  myName = getEl('nameInput').value.trim() || 'Anonymous';
+  chatRef.push({ who: myName, text: txt, id: myId, ts: Date.now() });
+}
+
+function appendChatMsg(who, text) {
+  var box = getEl('chatBody');
+  var div = document.createElement('div');
+  div.className = 'chat-msg';
+  div.innerHTML = '<span class="who">' + esc(who) + '</span> ' + esc(text);
+  box.appendChild(div);
+  while (box.children.length > 80) box.removeChild(box.firstChild);
+  box.scrollTop = box.scrollHeight;
+}
+
+function addLocalMsg(type, who, text) {
+  var box = getEl('chatBody');
+  var div = document.createElement('div');
+  if (type === 'system') {
+    div.className   = 'chat-system';
+    div.textContent = text;
+  } else {
+    div.className = 'chat-msg';
+    div.innerHTML = '<span class="who">' + esc(who) + '</span> ' + esc(text);
+  }
+  box.appendChild(div);
+  box.scrollTop = box.scrollHeight;
+}
+
+// ── Event listeners ──
+document.getElementById('appOverlay').addEventListener('click', function(e) {
+  if (e.target === this) closeApp();
+});
+
+document.addEventListener('keydown', function(e) {
+  if (e.key === 'Escape') closeApp();
+});
 
 // ── Overlay ──
 function openApp() {
