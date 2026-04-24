@@ -136,6 +136,198 @@
           <input class="app-input" id="videoInput" placeholder="Paste YouTube or Google Drive link..." />
           <button class="app-btn" onclick="loadVideo()">Load</button>
         </div>
+        <div class="app-hint" id="videoHint">Supports youtube.com, and drive.google.com share links.</div>
+      </div>
+
+      <!-- Player -->
+      <div class="player-container" id="playerContainer">
+        <div class="player-placeholder" id="playerPlaceholder">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1"><circle cx="12" cy="12" r="10"/><polygon points="10 8 16 12 10 16 10 8" fill="currentColor" stroke="none"/></svg>
+          <span>No video loaded</span>
+        </div>
+        <!-- YouTube -->
+        <iframe id="videoFrame" style="display:none;" allowfullscreen allow="autoplay; fullscreen"></iframe>
+        <!-- Google Drive (HTML5 video player) -->
+        <video id="driveVideo" style="display:none; position:absolute; top:0; left:0; width:100%; height:100%; background:#000;"
+          controls playsinline preload="metadata">
+        </video>
+      </div>
+
+      <!-- Sync countdown (Drive) -->
+      <div class="sync-countdown" id="syncCountdown">Starting in 3...</div>
+
+      <!-- Controls -->
+      <div class="player-controls" id="playerControls" style="display:none;">
+        <button class="ctrl" id="playPauseBtn" onclick="togglePlay()">
+          <svg id="playIcon" viewBox="0 0 24 24" fill="currentColor" width="16" height="16"><polygon points="5 3 19 12 5 21 5 3"/></svg>
+          <svg id="pauseIcon" viewBox="0 0 24 24" fill="currentColor" width="16" height="16" style="display:none;"><rect x="6" y="4" width="4" height="16"/><rect x="14" y="4" width="4" height="16"/></svg>
+          <span id="playLabel">Play</span>
+        </button>
+        <button class="ctrl" onclick="syncNow()">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="14" height="14"><polyline points="23 4 23 10 17 10"/><path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10"/></svg>
+          Sync
+        </button>
+        <button class="ctrl ctrl-expand" id="expandBtn" onclick="toggleExpand()" title="Expand / collapse player">
+          <svg id="expandIcon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="14" height="14"><polyline points="15 3 21 3 21 9"/><polyline points="9 21 3 21 3 15"/><line x1="21" y1="3" x2="14" y2="10"/><line x1="3" y1="21" x2="10" y2="14"/></svg>
+          <svg id="collapseIcon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="14" height="14" style="display:none;"><polyline points="4 14 10 14 10 20"/><polyline points="20 10 14 10 14 4"/><line x1="10" y1="14" x2="3" y2="21"/><line x1="21" y1="3" x2="14" y2="10"/></svg>
+          <span id="expandLabel">Expand</span>
+        </button>
+        <div class="time-display" id="timeDisplay">0:00</div>
+        <div class="drive-note" id="driveNote" style="display:none;">
+          Drive: tap Sync — both of you will get a 3s countdown then play together
+        </div>
+      </div>
+
+      <!-- Debug log (visible after joining a room) -->
+      <div id="debugBox" style="display:none; background:#0a0a14; border:1px solid #333; border-radius:8px; padding:8px 10px; margin-bottom:10px; font-size:11px; color:#6b6b9a; font-family:monospace; height:100px; overflow-y:auto; line-height:1.6;"></div>
+
+      <!-- Chat -->
+      <div class="chat-wrap">
+        <div class="chat-head">
+          <span>Chat</span>
+          <span class="chat-room-tag" id="chatRoomTag">—</span>
+        </div>
+        <div class="chat-body" id="chatBody">
+          <div class="chat-system">Join a room to start chatting.</div>
+        </div>
+        <div class="chat-foot">
+          <input class="chat-input" id="chatInput" placeholder="Message..." maxlength="200" onkeydown="if(event.key==='Enter')sendChat()" />
+          <button class="chat-send" onclick="sendChat()">↑</button>
+        </div>
+      </div>
+
+    </div>
+  </div>
+
+  <footer class="footer">
+    <div class="footer-logo">watch<span>together</span></div>
+    <p>No servers. No sign-in. Just vibes.</p>
+    <p class="footer-note">Built with YouTube Iframe API, Google Drive embeds &amp; Firebase Realtime Database.</p>
+  </footer>
+
+  <!-- Firebase SDK — must load before app.js -->
+  <script src="https://www.gstatic.com/firebasejs/10.12.0/firebase-app-compat.js"></script>
+  <script src="https://www.gstatic.com/firebasejs/10.12.0/firebase-database-compat.js"></script>
+  <script>
+    try {
+      firebase.initializeApp({
+        apiKey: "AIzaSyBuM6A37rrs920vAry2v6y6oPjqzLasFTM",
+        authDomain: "watch2gether-b1160.firebaseapp.com",
+        databaseURL: "https://watch2gether-b1160-default-rtdb.firebaseio.com",
+        projectId: "watch2gether-b1160",
+        storageBucket: "watch2gether-b1160.firebasestorage.app",
+        messagingSenderId: "863701572505",
+        appId: "1:863701572505:web:ef21067a04074e98031108"
+      });
+    } catch(e) {
+      console.warn('Firebase init error:', e);
+    }
+  </script>
+  <script src="app.js"></script>
+</body>
+</html>
+        <div class="mockup-bar">
+          <span class="mockup-dot"></span><span class="mockup-dot"></span><span class="mockup-dot"></span>
+          <span class="mockup-url">watchtogether.app · room: movienight</span>
+        </div>
+        <div class="mockup-player">
+          <div class="mockup-play-icon">
+            <svg viewBox="0 0 24 24" fill="currentColor"><polygon points="5 3 19 12 5 21 5 3"/></svg>
+          </div>
+          <div class="mockup-timestamp">1:24:38</div>
+        </div>
+        <div class="mockup-users">
+          <div class="mockup-avatar" style="--c:#f97316">S</div>
+          <div class="mockup-avatar" style="--c:#06b6d4">J</div>
+          <div class="mockup-status">2 watching now</div>
+        </div>
+        <div class="mockup-chat-preview">
+          <div class="mockup-msg"><b>Soheng</b> omg this part 😭</div>
+          <div class="mockup-msg"><b>Jin</b> I KNOW RIGHT</div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- HOW IT WORKS -->
+  <section class="how" id="how">
+    <div class="how-inner">
+      <h2 class="section-title">How it works</h2>
+      <div class="steps">
+        <div class="step">
+          <div class="step-num">01</div>
+          <div class="step-body">
+            <h3>Create a room</h3>
+            <p>Type any room name — something like <code>fridaynight</code> — and hit join. No account needed.</p>
+          </div>
+        </div>
+        <div class="step-divider"></div>
+        <div class="step">
+          <div class="step-num">02</div>
+          <div class="step-body">
+            <h3>Share with a friend</h3>
+            <p>Tell your friend the room name. They open the site, type the same name, and they're in.</p>
+          </div>
+        </div>
+        <div class="step-divider"></div>
+        <div class="step">
+          <div class="step-num">03</div>
+          <div class="step-body">
+            <h3>Paste a video link</h3>
+            <p>Drop in a YouTube URL or a Google Drive share link. The video loads for everyone in the room.</p>
+          </div>
+        </div>
+        <div class="step-divider"></div>
+        <div class="step">
+          <div class="step-num">04</div>
+          <div class="step-body">
+            <h3>Watch in sync</h3>
+            <p>Play, pause, and seek — everything stays in sync. Chat alongside the video in real time.</p>
+          </div>
+        </div>
+      </div>
+      <div class="how-cta">
+        <button class="btn-primary" onclick="openApp()">Open the app</button>
+      </div>
+    </div>
+  </section>
+
+  <!-- THE APP OVERLAY -->
+  <div class="app-overlay" id="appOverlay">
+    <div class="app-modal">
+      <button class="app-close" onclick="closeApp()">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+      </button>
+
+      <div class="app-header">
+        <span class="app-logo">watch<b>together</b></span>
+        <input class="app-name-input" id="nameInput" placeholder="Your name" maxlength="20" />
+      </div>
+
+      <!-- Room setup -->
+      <div class="app-section" id="roomSection">
+        <div class="app-row">
+          <input class="app-input" id="roomInput" placeholder="Room name (e.g. movienight)" maxlength="30" />
+          <button class="app-btn" onclick="joinRoom()">Join / Create</button>
+        </div>
+        <div class="app-hint">Share this room name with your friend so they can join too.</div>
+      </div>
+
+      <div class="app-room-badge" id="roomBadge" style="display:none;">
+        <span id="roomBadgeLabel"></span>
+        <span class="member-count" id="memberCount">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="13" height="13"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/></svg>
+          <span id="memberCountNum">1</span> watching
+        </span>
+        <button class="copy-btn" onclick="copyRoom()">copy name</button>
+      </div>
+
+      <!-- Video input -->
+      <div class="app-section">
+        <div class="app-row">
+          <input class="app-input" id="videoInput" placeholder="Paste YouTube or Google Drive link..." />
+          <button class="app-btn" onclick="loadVideo()">Load</button>
+        </div>
         <div class="app-hint" id="videoHint">Supports youtube.com, youtu.be, and drive.google.com share links.</div>
       </div>
 
