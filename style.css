@@ -145,7 +145,7 @@ body { font-family: var(--font-body); background: var(--bg); color: var(--text);
 /* ── Player ── */
 .player-container {
   position: relative;
-  width: 105%;
+  width: 106%;
   background: #000;
   border-radius: var(--radius);
   overflow: hidden;
